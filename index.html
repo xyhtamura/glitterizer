@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>glitterizer</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand-wrap">
+    <span class="sparkle-icon">💖</span>
+    <h1>glitterizer</h1>
+    <span class="sparkle-icon">✨</span>
+  </div>
+  <p class="sub">Brush procedural glitter over an image.</p>
+  <div class="bar-actions">
+    <button id="btn-choose" type="button">Choose image</button>
+  </div>
+</header>
+
+<main>
+  <section class="stage-wrap">
+    <div id="empty" class="empty">
+      <div class="empty-icon-cloud">🎀 ✨ 💖 ✦ 🌸</div>
+      <p>Drop an image, or click to choose one.</p>
+      <p class="hint">Nothing is uploaded. The image stays in this browser.</p>
+    </div>
+    <div id="stage" class="stage" hidden>
+      <canvas id="base"></canvas>
+      <canvas id="sparkle"></canvas>
+      <canvas id="overlay"></canvas>
+    </div>
+    <div id="transport" class="transport" hidden>
+      <button id="btn-play" type="button">Play</button>
+      <input id="scrub" type="range" min="0" max="23" step="1" value="0" aria-label="Frame">
+      <span id="frame-label" class="frame-label">Frame 1 of 24</span>
+    </div>
+    <p id="status" class="status"></p>
+  </section>
+
+  <aside class="panel" id="panel" hidden>
+
+    <section class="group">
+      <h2>Brush</h2>
+      <div class="modes">
+        <button type="button" class="mode is-on" data-mode="paint">Paint</button>
+        <button type="button" class="mode" data-mode="erase">Erase</button>
+      </div>
+      <div id="brush-controls"></div>
+      <div class="row">
+        <button id="btn-undo" type="button">Undo</button>
+        <button id="btn-clear" type="button">Clear glitter</button>
+      </div>
+    </section>
+
+    <section class="group">
+      <h2>Field</h2>
+      <div id="layer-controls"></div>
+      <div class="row">
+        <button id="btn-reshuffle" type="button">Reshuffle placement</button>
+      </div>
+    </section>
+
+    <section class="group">
+      <h2>Loop</h2>
+      <div id="loop-controls"></div>
+    </section>
+
+    <section class="group">
+      <h2 id="kit-title">Kit</h2>
+      <div id="kit-controls"></div>
+    </section>
+
+    <section class="group">
+      <h2>Export</h2>
+      <div id="export-controls"></div>
+      <div class="row">
+        <button id="btn-png" type="button">Export PNG</button>
+        <button id="btn-webm" type="button">Export WebM</button>
+      </div>
+      <div class="row">
+        <button id="btn-save" type="button">Save project</button>
+        <button id="btn-load" type="button">Load project</button>
+      </div>
+    </section>
+
+  </aside>
+</main>
+
+<input type="file" id="file" accept="image/*" hidden>
+<input type="file" id="file-project" accept="application/json,.json" hidden>
+<script type="module" src="app/main.js"></script>
+</body>
+</html>
