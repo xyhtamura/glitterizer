@@ -347,24 +347,52 @@ for (const b of document.querySelectorAll('.mode')) {
 // ---- image loading ----
 
 async function loadFile(file) {
-  if (!file || !file.type.startsWith('image/')) {
+  if (!file) return;
+  if (file.type && !file.type.startsWith('image/') && !/\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name)) {
     status('That file is not an image.');
     return;
   }
   status('Loading image…');
   try {
     const bitmap = await createImageBitmap(file);
-    setImage(bitmap, bitmap.width, bitmap.height);
-  } catch {
-    const url = URL.createObjectURL(file);
+    if (bitmap && bitmap.width > 0 && bitmap.height > 0) {
+      setImage(bitmap, bitmap.width, bitmap.height);
+      return;
+    }
+  } catch (err) {
+    console.warn('createImageBitmap failed, trying FileReader fallback', err);
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
     const img = new Image();
     img.onload = () => {
-      setImage(img, img.naturalWidth, img.naturalHeight);
-      URL.revokeObjectURL(url);
+      if (img.naturalWidth && img.naturalHeight) {
+        setImage(img, img.naturalWidth, img.naturalHeight);
+      } else {
+        status('That image has invalid dimensions.');
+      }
     };
     img.onerror = () => status('That image could not be read.');
-    img.src = url;
-  }
+    img.src = reader.result;
+  };
+  reader.onerror = () => status('File reading failed.');
+  reader.readAsDataURL(file);
+}
+
+function loadURL(url) {
+  status('Loading image from URL…');
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    if (img.naturalWidth && img.naturalHeight) {
+      setImage(img, img.naturalWidth, img.naturalHeight);
+    } else {
+      status('That image has invalid dimensions.');
+    }
+  };
+  img.onerror = () => status('Could not load image from URL.');
+  img.src = url;
 }
 
 function showWorkspace(img) {
@@ -383,6 +411,7 @@ function showWorkspace(img) {
   state.frame = 0;
   syncTransport();
   invalidate();
+  play();
 }
 
 function setImage(img, w, h) {
@@ -395,7 +424,8 @@ function setImage(img, w, h) {
 els.choose.addEventListener('click', () => els.file.click());
 els.empty.addEventListener('click', () => els.file.click());
 els.file.addEventListener('change', () => {
-  if (els.file.files[0]) loadFile(els.file.files[0]);
+  const f = els.file.files[0];
+  if (f) loadFile(f);
   els.file.value = '';
 });
 
@@ -412,10 +442,17 @@ for (const ev of ['dragleave', 'drop']) {
   });
 }
 document.addEventListener('drop', (e) => {
+  e.preventDefault();
   const f = e.dataTransfer?.files?.[0];
-  if (!f) return;
-  if (f.type === 'application/json' || f.name.endsWith('.json')) loadProjectFile(f);
-  else loadFile(f);
+  if (f) {
+    if (f.type === 'application/json' || f.name.endsWith('.json')) loadProjectFile(f);
+    else loadFile(f);
+    return;
+  }
+  const uri = e.dataTransfer?.getData('text/uri-list') || e.dataTransfer?.getData('URL');
+  if (uri) {
+    loadURL(uri);
+  }
 });
 document.addEventListener('paste', (e) => {
   for (const item of e.clipboardData?.items || []) {
