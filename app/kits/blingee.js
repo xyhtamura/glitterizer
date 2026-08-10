@@ -10,7 +10,7 @@ const WHITE_COL = HUES;       // the extra column past the hues
 const SHAPES = ['star4', 'star6', 'cross', 'snowflake', 'heart', 'ring'];
 
 export const id = 'blingee';
-export const label = 'Blingee stamps';
+export const label = 'Glitter';
 
 export const params = [
   {
@@ -25,7 +25,7 @@ export const params = [
       { v: 'heart', l: 'Heart' },
       { v: 'ring', l: 'Ring' }
     ],
-    value: ['star4', 'star6', 'cross']
+    value: ['star4']
   },
   { key: 'sizeMin', label: 'Smallest sparkle (px)', type: 'range', min: 2, max: 60, step: 1, value: 8 },
   { key: 'sizeMax', label: 'Largest sparkle (px)', type: 'range', min: 3, max: 140, step: 1, value: 32 },
