@@ -140,6 +140,17 @@ function play() {
   state.raf = requestAnimationFrame(tick);
 }
 
+function tick(now) {
+  if (!state.playing) return;
+  const f = Math.floor((now - state.clockStart) / (1000 / doc.loop.fps)) % doc.loop.frames;
+  if (f !== state.frame || state.dirty) {
+    state.frame = f;
+    syncTransport();
+    draw();
+  }
+  state.raf = requestAnimationFrame(tick);
+}
+
 function pause() {
   if (!state.playing) return;
   state.playing = false;
@@ -148,15 +159,30 @@ function pause() {
   cancelAnimationFrame(state.raf);
 }
 
-function tick(now) {
-  if (!state.playing) return;
-  const f = Math.floor((now - state.clockStart) / (1000 / doc.loop.fps)) % doc.loop.frames;
-  if (f !== state.frame) {
-    state.frame = f;
-    syncTransport();
-    draw();
+function showWorkspace(img) {
+  for (const c of [els.base, els.sparkle, els.overlay]) {
+    c.width = doc.width;
+    c.height = doc.height;
   }
-  state.raf = requestAnimationFrame(tick);
+  renderBase(baseCtx, img, doc.width, doc.height);
+  brush.clearOverlay();
+
+  els.empty.hidden = true;
+  els.stage.hidden = false;
+  els.transport.hidden = false;
+  els.panel.hidden = false;
+
+  state.frame = 0;
+  syncTransport();
+  invalidate();
+  play();
+}
+
+function setImage(img, w, h) {
+  pause();
+  doc.setImage(img, w, h);
+  showWorkspace(img);
+  status(`${doc.width} × ${doc.height} px · paint to add glitter`);
 }
 
 els.play.addEventListener('click', () => (state.playing ? pause() : play()));
