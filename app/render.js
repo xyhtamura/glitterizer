@@ -2,7 +2,10 @@
 // source image sits on a canvas underneath and is never touched.
 // The loop transport and time-varying draw arrive in M2 — see glitterizer.md §8.
 
-import { lifeAt } from './particles.js';
+import { lifeAt, positionAt } from './particles.js';
+
+// Reused across particles so a frame does not allocate once per sparkle.
+const pos = [0, 0];
 
 export function renderFrame(ctx, particles, kit, t = 0, lifetime = 1) {
   const { width, height } = ctx.canvas;
@@ -24,7 +27,8 @@ export function drawParticles(ctx, particles, kit, t = 0, lifetime = 1) {
     const p = particles[i];
     const env = lifeAt(p.phase, t, lifetime);
     if (env <= 0) continue;
-    kit.draw(ctx, p, t, env);
+    positionAt(p, t, lifetime, pos);
+    kit.draw(ctx, p, t, env, pos);
   }
   ctx.restore();
   ctx.globalAlpha = 1;

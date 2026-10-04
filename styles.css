@@ -512,6 +512,26 @@ button.is-on:hover:not(:disabled) {
 
 /* ---- Special Control Groupings ---- */
 
+.tools {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.tools .tool {
+  padding: 7px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+.tool-hint {
+  margin: 0 0 10px;
+  color: var(--ink-dim);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .modes {
   display: flex;
   gap: 4px;

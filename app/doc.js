@@ -2,7 +2,12 @@
 // parameters, and an undo stack of field snapshots. Serialization to JSON is
 // M2 — see glitterizer.md §8.
 
-import { Field, fieldToDataURL, fieldFromImage, loadImage } from './fields.js';
+import {
+  Field, VectorField,
+  fieldToDataURL, fieldFromImage,
+  vectorFieldToDataURL, vectorFieldFromImage,
+  loadImage
+} from './fields.js';
 import { newSeed } from './rng.js';
 
 /** Long edge of the working canvas. Larger sources are scaled down on load. */
@@ -27,6 +32,18 @@ export const LAYER_PARAMS = [
     max: 8000,
     step: 100,
     value: 4000
+  },
+  {
+    // How far a sparkle travels along the flow over one lifetime. Sparkles
+    // hold still at a lifetime of 100%, where there is no fade to hide the
+    // return to the start — see LOOP_PARAMS below.
+    key: 'travel',
+    label: 'Travel distance (px per life)',
+    type: 'range',
+    min: 0,
+    max: 500,
+    step: 10,
+    value: 140
   }
 ];
 
@@ -38,7 +55,10 @@ export const LAYER_PARAMS = [
 export const LOOP_PARAMS = [
   { key: 'frames', label: 'Loop length (frames)', type: 'range', min: 6, max: 60, step: 1, value: 24 },
   { key: 'fps', label: 'Frames per second', type: 'range', min: 4, max: 30, step: 1, value: 12 },
-  { key: 'lifetime', label: 'Sparkle lifetime (% of loop)', type: 'range', min: 10, max: 100, step: 5, value: 100 }
+  // At 100% a sparkle is alive for the whole loop and never fades, so there is
+  // no cover for the jump back to the start of its path — travel is switched
+  // off there, and the default sits below it so painted direction shows.
+  { key: 'lifetime', label: 'Sparkle lifetime (% of loop)', type: 'range', min: 10, max: 100, step: 5, value: 70 }
 ];
 
 export const EXPORT_PARAMS = [
@@ -65,6 +85,9 @@ export class Doc {
     this.width = 0;
     this.height = 0;
     this.density = null;    // Field
+    this.flow = null;       // VectorField — direction of travel
+    this.focus = null;      // Field — concentration of attention
+    this.focalPoints = [];
     this.source = null;     // SourceSampler
     this.seed = newSeed();
     this.layerId = 1;
@@ -88,27 +111,41 @@ export class Doc {
     this.height = Math.max(1, Math.round(naturalH * scale));
     this.image = img;
     this.density = Field.forImage(this.width, this.height);
+    this.flow = VectorField.forImage(this.width, this.height);
+    this.focus = Field.forImage(this.width, this.height);
+    this.focalPoints = [];
     this.source = new SourceSampler(img, this.width, this.height);
     this.undoStack = [];
   }
 
-  pushUndo() {
+  /**
+   * One entry per stroke, holding only the thing that stroke touched. Keeping
+   * three full fields per step would cost megabytes for no benefit.
+   * @param {'density'|'flow'|'focus'|'focal'} target
+   */
+  pushUndo(target = 'density') {
     if (!this.density) return;
-    this.undoStack.push(this.density.clone());
+    const snapshot = target === 'focal'
+      ? this.focalPoints.map((p) => ({ ...p }))
+      : this[target].clone();
+    this.undoStack.push({ target, snapshot });
     if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
   }
 
   undo() {
-    const prev = this.undoStack.pop();
-    if (!prev) return false;
-    this.density.copyFrom(prev);
-    return true;
+    const entry = this.undoStack.pop();
+    if (!entry) return false;
+    if (entry.target === 'focal') this.focalPoints = entry.snapshot;
+    else this[entry.target].copyFrom(entry.snapshot);
+    return entry.target;
   }
 
-  clearField() {
+  /** Clear one painted field, or remove every focal point. */
+  clearField(target = 'density') {
     if (!this.density) return;
-    this.pushUndo();
-    this.density.clear();
+    this.pushUndo(target);
+    if (target === 'focal') this.focalPoints = [];
+    else this[target].clear();
   }
 
   /**
@@ -130,14 +167,17 @@ export class Doc {
       exportOpts: { ...this.exportOpts },
       kitId: this.kitId,
       kitParams: structuredClone(this.kitParams),
+      focalPoints: this.focalPoints.map((p) => ({ ...p })),
       image: baseCanvas.toDataURL('image/png'),
-      density: fieldToDataURL(this.density)
+      density: fieldToDataURL(this.density),
+      flow: vectorFieldToDataURL(this.flow),
+      focus: fieldToDataURL(this.focus)
     };
   }
 }
 
 export const PROJECT_FORMAT = 'glitterizer';
-export const PROJECT_VERSION = 1;
+export const PROJECT_VERSION = 2;
 
 /**
  * Restore a project into `doc`. Returns the decoded source image so the caller
@@ -156,6 +196,17 @@ export async function deserialize(json, doc) {
 
   const fieldImg = await loadImage(json.density);
   doc.density = fieldFromImage(fieldImg, doc.density.w, doc.density.h);
+
+  // Version 1 files predate direction and focus; they load with both empty.
+  if (json.flow) {
+    doc.flow = vectorFieldFromImage(await loadImage(json.flow), doc.flow.w, doc.flow.h);
+  }
+  if (json.focus) {
+    doc.focus = fieldFromImage(await loadImage(json.focus), doc.focus.w, doc.focus.h);
+  }
+  doc.focalPoints = Array.isArray(json.focalPoints)
+    ? json.focalPoints.map((p) => ({ ...p }))
+    : [];
 
   doc.seed = json.seed ?? doc.seed;
   doc.layerId = json.layerId ?? doc.layerId;

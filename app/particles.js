@@ -3,6 +3,14 @@
 // the same order, every time. See glitterizer.md §1.
 
 import { particleRng, r2, splitmix32 } from './rng.js';
+import { flowAt, hasFlow } from './flow.js';
+
+/**
+ * Steps in a precomputed path. Integrating once per particle and sampling the
+ * result beats integrating every frame: it costs the same at t = 0 as at
+ * t = 0.9, and re-rendering a frame cannot drift away from the last one.
+ */
+export const PATH_STEPS = 16;
 
 /** Hard ceiling on candidates tested, regardless of density and image size. */
 const MAX_CANDIDATES = 120000;
@@ -42,7 +50,11 @@ export function deriveParticles(doc, kit) {
     if (d <= 0) continue;
 
     const rng = particleRng(doc.seed, doc.layerId, i);
-    if (rng() >= d) continue;
+
+    // Focus concentrates attention: painted focus makes a candidate likelier to
+    // survive, on top of whatever the kit does with it — see glitterizer.md §3.
+    const focus = doc.focus ? doc.focus.sample(u, v) : 0;
+    if (rng() >= d * (1 + focus)) continue;
 
     // Drawn before the kit gets the generator, so birth phase is a property of
     // the particle rather than of whichever kit happens to be active.
@@ -51,13 +63,78 @@ export function deriveParticles(doc, kit) {
     const x = u * doc.width;
     const y = v * doc.height;
     const sampled = doc.source.at(x, y);
+    sampled.focus = focus;
     const p = kit.spawn(rng, sampled, doc.kitParams, d);
     p.x = x;
     p.y = y;
     p.density = d;
+    p.focus = focus;
     p.phase = phase;
     out.push(p);
   }
+
+  buildPaths(doc, out);
+  return out;
+}
+
+/**
+ * Walk each particle forward through the flow field once and keep the polyline.
+ * Nothing is built when there is no flow, no travel distance, or no fade to
+ * cover the return to the start.
+ */
+function buildPaths(doc, particles) {
+  const travel = doc.layer.travel;
+  if (!particles.length || travel <= 0 || doc.loop.lifetime >= 100 || !hasFlow(doc)) {
+    for (const p of particles) p.path = null;
+    return;
+  }
+
+  const L = PATH_STEPS;
+  const stride = (L + 1) * 2;
+  const buf = new Float32Array(particles.length * stride);
+  const step = travel / L;
+  const v = [0, 0];
+
+  for (let i = 0; i < particles.length; i++) {
+    const off = i * stride;
+    let x = particles[i].x;
+    let y = particles[i].y;
+    buf[off] = x;
+    buf[off + 1] = y;
+    for (let s = 1; s <= L; s++) {
+      flowAt(doc, x, y, v);
+      x += v[0] * step;
+      y += v[1] * step;
+      buf[off + s * 2] = x;
+      buf[off + s * 2 + 1] = y;
+    }
+    particles[i].path = buf.subarray(off, off + stride);
+  }
+}
+
+/**
+ * Where a particle is at loop time t, written into `out`.
+ *
+ * Age is modular in t, so a particle is in exactly the same place at t = 0 and
+ * t = 1 and the motion loops without a seam.
+ */
+export function positionAt(p, t, life, out) {
+  if (!p.path || life >= 1) {
+    out[0] = p.x;
+    out[1] = p.y;
+    return out;
+  }
+  let age = (t - p.phase) % 1;
+  if (age < 0) age += 1;
+  const u = age > life ? 1 : age / life;
+  const f = u * PATH_STEPS;
+  let i = f | 0;
+  if (i >= PATH_STEPS) i = PATH_STEPS - 1;
+  const fr = f - i;
+  const a = i * 2;
+  const b = a + 2;
+  out[0] = p.path[a] + (p.path[b] - p.path[a]) * fr;
+  out[1] = p.path[a + 1] + (p.path[b + 1] - p.path[a + 1]) * fr;
   return out;
 }
 

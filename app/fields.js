@@ -114,6 +114,121 @@ export class Field {
   }
 }
 
+/**
+ * A two-channel field, for direction. Carries a third weight channel used only
+ * by stroke buffers: a stroke records the strongest weight it laid at each
+ * cell, then blends that into the document's field on release, so painting
+ * over an area rotates it toward the new direction instead of accumulating.
+ */
+export class VectorField {
+  constructor(w, h) {
+    this.w = Math.max(1, w);
+    this.h = Math.max(1, h);
+    const n = this.w * this.h;
+    this.x = new Float32Array(n);
+    this.y = new Float32Array(n);
+    this.wt = new Float32Array(n);
+  }
+
+  static forImage(imgW, imgH) {
+    return new VectorField(
+      Math.ceil(imgW / FIELD_DIVISOR),
+      Math.ceil(imgH / FIELD_DIVISOR)
+    );
+  }
+
+  clear() {
+    this.x.fill(0);
+    this.y.fill(0);
+    this.wt.fill(0);
+  }
+
+  clone() {
+    const f = new VectorField(this.w, this.h);
+    f.x.set(this.x);
+    f.y.set(this.y);
+    f.wt.set(this.wt);
+    return f;
+  }
+
+  copyFrom(other) {
+    this.x.set(other.x);
+    this.y.set(other.y);
+    this.wt.set(other.wt);
+  }
+
+  isEmpty() {
+    for (let i = 0; i < this.x.length; i++) {
+      if (this.x[i] !== 0 || this.y[i] !== 0) return false;
+    }
+    return true;
+  }
+
+  /** Bilinear sample of both channels into `out`. u, v in [0, 1]. */
+  sample(u, v, out) {
+    const px = u * this.w - 0.5;
+    const py = v * this.h - 0.5;
+    const x0 = Math.floor(px);
+    const y0 = Math.floor(py);
+    const fx = px - x0;
+    const fy = py - y0;
+    const idx = (ix, iy) => {
+      const cx = ix < 0 ? 0 : ix >= this.w ? this.w - 1 : ix;
+      const cy = iy < 0 ? 0 : iy >= this.h ? this.h - 1 : iy;
+      return cy * this.w + cx;
+    };
+    const a = idx(x0, y0), b = idx(x0 + 1, y0), c = idx(x0, y0 + 1), d = idx(x0 + 1, y0 + 1);
+    const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy);
+    const w01 = (1 - fx) * fy, w11 = fx * fy;
+    out[0] = this.x[a] * w00 + this.x[b] * w10 + this.x[c] * w01 + this.x[d] * w11;
+    out[1] = this.y[a] * w00 + this.y[b] * w10 + this.y[c] * w01 + this.y[d] * w11;
+    return out;
+  }
+
+  /** Stroke-buffer write: keep the strongest weight and its direction. */
+  stampDirection(cx, cy, radius, dx, dy, strength, hardness) {
+    if (radius <= 0 || strength <= 0) return;
+    const x0 = Math.max(0, Math.floor(cx - radius));
+    const x1 = Math.min(this.w - 1, Math.ceil(cx + radius));
+    const y0 = Math.max(0, Math.floor(cy - radius));
+    const y1 = Math.min(this.h - 1, Math.ceil(cy + radius));
+    const r2 = radius * radius;
+    const feather = Math.max(1e-4, 1 - hardness);
+    for (let y = y0; y <= y1; y++) {
+      const ddy = y + 0.5 - cy;
+      for (let x = x0; x <= x1; x++) {
+        const ddx = x + 0.5 - cx;
+        const d2 = ddx * ddx + ddy * ddy;
+        if (d2 > r2) continue;
+        let t = (1 - Math.sqrt(d2) / radius) / feather;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const w = t * t * (3 - 2 * t) * strength;
+        const i = y * this.w + x;
+        if (w > this.wt[i]) {
+          this.wt[i] = w;
+          this.x[i] = dx;
+          this.y[i] = dy;
+        }
+      }
+    }
+  }
+
+  /** Blend a finished stroke in: toward its direction, or toward zero. */
+  commitStroke(stroke, erase) {
+    for (let i = 0; i < this.x.length; i++) {
+      const w = stroke.wt[i];
+      if (w <= 0) continue;
+      if (erase) {
+        this.x[i] *= 1 - w;
+        this.y[i] *= 1 - w;
+      } else {
+        this.x[i] += (stroke.x[i] - this.x[i]) * w;
+        this.y[i] += (stroke.y[i] - this.y[i]) * w;
+      }
+    }
+  }
+}
+
 // ---- serialization ----
 //
 // Fields travel in project files as grayscale PNGs. 8 bits is more resolution
@@ -148,6 +263,53 @@ export function fieldFromImage(img, w, h) {
   const d = ctx.getImageData(0, 0, w, h).data;
   const f = new Field(w, h);
   for (let i = 0; i < f.data.length; i++) f.data[i] = d[i * 4] / 255;
+  return f;
+}
+
+/**
+ * Direction travels as a PNG too: x in red, y in green.
+ *
+ * Zero sits at 127 with a scale of 127, not at 127.5 with a scale of 127.5.
+ * The half-step version cannot represent zero — it rounds to 128, which decodes
+ * to 0.004, so an unpainted field would come back as a faint drift everywhere
+ * and `isEmpty` would stop being true. This mapping is exactly invertible on
+ * the byte grid, so zero stays zero and ±1 stay ±1.
+ */
+const VEC_ZERO = 127;
+
+export function vectorFieldToDataURL(field) {
+  const c = document.createElement('canvas');
+  c.width = field.w;
+  c.height = field.h;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(field.w, field.h);
+  const enc = (v) => {
+    const b = Math.round(Math.max(-1, Math.min(1, v)) * VEC_ZERO) + VEC_ZERO;
+    return b < 0 ? 0 : b > 255 ? 255 : b;
+  };
+  for (let i = 0; i < field.x.length; i++) {
+    const j = i * 4;
+    img.data[j] = enc(field.x[i]);
+    img.data[j + 1] = enc(field.y[i]);
+    img.data[j + 2] = 0;
+    img.data[j + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return c.toDataURL('image/png');
+}
+
+export function vectorFieldFromImage(img, w, h) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, w, h);
+  const d = ctx.getImageData(0, 0, w, h).data;
+  const f = new VectorField(w, h);
+  for (let i = 0; i < f.x.length; i++) {
+    f.x[i] = (d[i * 4] - VEC_ZERO) / VEC_ZERO;
+    f.y[i] = (d[i * 4 + 1] - VEC_ZERO) / VEC_ZERO;
+  }
   return f;
 }
 

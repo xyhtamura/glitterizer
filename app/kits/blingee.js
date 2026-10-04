@@ -86,11 +86,16 @@ export function spawn(rng, sampled, p) {
   // what reads as glitter rather than as confetti.
   const lo = Math.min(p.sizeMin, p.sizeMax);
   const hi = Math.max(p.sizeMin, p.sizeMax);
-  const size = lo + (hi - lo) * Math.pow(rng(), 1.8);
+  // Painted focus reads here as bigger and brighter. Each kit makes its own
+  // sense of the same field — see glitterizer.md §3.
+  const focus = sampled.focus || 0;
+  const size = (lo + (hi - lo) * Math.pow(rng(), 1.8)) * (1 + 1.2 * focus);
 
   // Twinkle rate is a whole number of cycles per loop, so every sparkle is
-  // back where it started at t = 1 and the loop closes exactly.
-  const rate = p.twinkleSpeed * [1, 1, 2, 3][(rng() * 4) | 0];
+  // back where it started at t = 1 and the loop closes exactly. Focus pushes
+  // the multiplier up the table, never off the integers.
+  const factor = [1, 1, 2, 3][Math.min(3, ((rng() * 4) | 0) + Math.round(focus * 1.5))];
+  const rate = p.twinkleSpeed * factor;
   const steps = shuffled(STEPS, rng);
   // Spin likewise: one whole turn per loop, or none.
   const spin = rng() < p.spin / 100 ? (rng() < 0.5 ? 1 : -1) : 0;
@@ -100,7 +105,7 @@ export function spawn(rng, sampled, p) {
     col,
     size,
     rot: rng() * Math.PI * 2 * (p.rotate / 100),
-    alpha: (0.55 + 0.45 * rng()) * (p.brightness / 100),
+    alpha: Math.min(1, (0.55 + 0.45 * rng()) * (p.brightness / 100) * (1 + 0.5 * focus)),
     depth: p.twinkle / 100,
     rate,
     steps,
@@ -109,7 +114,7 @@ export function spawn(rng, sampled, p) {
   };
 }
 
-export function draw(ctx, pt, t, env) {
+export function draw(ctx, pt, t, env, pos) {
   let m = 1;
   if (pt.depth > 0) {
     const c = (pt.twOff + t * pt.rate) % 1;
@@ -125,7 +130,7 @@ export function draw(ctx, pt, t, env) {
 
   ctx.globalAlpha = alpha;
   ctx.save();
-  ctx.translate(pt.x, pt.y);
+  ctx.translate(pos[0], pos[1]);
   if (rot) ctx.rotate(rot);
   ctx.drawImage(
     atlas,

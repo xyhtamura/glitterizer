@@ -13,6 +13,7 @@ import { Brush } from './brush.js';
 import { exportPNG } from './export/png.js';
 import { exportWebM, webmSupported } from './export/webm.js';
 import { saveProject, readProjectFile } from './export/project.js';
+import { FOCAL_MODES, hasFlow } from './flow.js';
 import { newSeed } from './rng.js';
 
 const el = (id) => document.getElementById(id);
@@ -39,6 +40,11 @@ const els = {
   webm: el('btn-webm'),
   save: el('btn-save'),
   load: el('btn-load'),
+  modeRow: el('mode-row'),
+  toolHint: el('tool-hint'),
+  focalGroup: el('focal-group'),
+  focalControls: el('focal-controls'),
+  focalRemove: el('btn-focal-remove'),
   brushControls: el('brush-controls'),
   layerControls: el('layer-controls'),
   loopControls: el('loop-controls'),
@@ -53,7 +59,7 @@ doc.kitParams = defaultsOf(kit.params);
 
 const baseCtx = els.base.getContext('2d');
 const sparkleCtx = els.sparkle.getContext('2d');
-const brush = new Brush(els.overlay, doc, () => invalidate());
+const brush = new Brush(els.overlay, doc, () => invalidate(), (i) => syncFocalPanel(i));
 
 const state = {
   particles: [],
@@ -179,8 +185,13 @@ function status(msg) {
   const n = state.particles.length.toLocaleString();
   const limited = state.particles.length >= doc.layer.maxParticles ? ' (at the sparkle limit)' : '';
   const secs = (doc.loop.frames / doc.loop.fps).toFixed(1);
+  // A lifetime of 100% leaves no fade to cover the return to the start of a
+  // path, so travel is off there. Say so where the direction was painted.
+  const still = doc.loop.lifetime >= 100 && doc.layer.travel > 0 && hasFlow(doc)
+    ? ' · sparkles hold still at 100% lifetime'
+    : '';
   els.status.textContent =
-    `${doc.width} × ${doc.height} px · ${n} sparkles · ${secs} s loop${limited}`;
+    `${doc.width} × ${doc.height} px · ${n} sparkles · ${secs} s loop${limited}${still}`;
 }
 
 // ---- controls ----
@@ -303,11 +314,73 @@ function onLoopChange(key) {
   if (key === 'frames' && state.frame >= doc.loop.frames) state.frame = doc.loop.frames - 1;
   if (state.playing) state.clockStart = performance.now() - state.frame * (1000 / doc.loop.fps);
   syncTransport();
+  // Lifetime decides whether paths get built at all, so it needs a re-derive
+  // rather than a redraw.
+  if (key === 'lifetime') invalidate();
+  else scheduleDraw();
   status();
-  scheduleDraw();
 }
 
 buildAllControls();
+
+// ---- tools ----
+
+const TOOLS = {
+  density: {
+    hint: 'Paint where sparkles appear.',
+    clear: 'Clear glitter',
+    modes: true
+  },
+  flow: {
+    hint: 'Drag to set which way sparkles travel. Arrows show the current direction.',
+    clear: 'Clear direction',
+    modes: true
+  },
+  focus: {
+    hint: 'Paint where sparkles concentrate: more of them, larger and brighter.',
+    clear: 'Clear focus',
+    modes: true
+  },
+  focal: {
+    hint: 'Click to place a focal point. Drag one to move it.',
+    clear: 'Remove all focal points',
+    modes: false
+  }
+};
+
+const FOCAL_PARAMS = [
+  { key: 'mode', label: 'Behaviour', type: 'select', options: FOCAL_MODES, value: 'emit' },
+  { key: 'strength', label: 'Strength (%)', type: 'range', min: 0, max: 100, step: 5, value: 80 },
+  { key: 'radius', label: 'Reach (px)', type: 'range', min: 40, max: 1200, step: 10, value: 220 }
+];
+
+function setTool(tool) {
+  brush.setTarget(tool);
+  for (const b of document.querySelectorAll('.tool')) {
+    b.classList.toggle('is-on', b.dataset.tool === tool);
+  }
+  const meta = TOOLS[tool];
+  els.toolHint.textContent = meta.hint;
+  els.modeRow.hidden = !meta.modes;
+  els.clear.textContent = meta.clear;
+  syncFocalPanel(brush.selected);
+}
+
+/** Show the controls for whichever focal point is selected, if any. */
+function syncFocalPanel(i) {
+  const fp = i >= 0 ? doc.focalPoints[i] : null;
+  els.focalGroup.hidden = brush.target !== 'focal' || !fp;
+  if (!fp) return;
+  buildControls(els.focalControls, FOCAL_PARAMS, fp, () => {
+    brush.paintOverlay();
+    invalidate();
+  });
+}
+
+for (const b of document.querySelectorAll('.tool')) {
+  b.addEventListener('click', () => setTool(b.dataset.tool));
+}
+setTool('density');
 
 for (const b of document.querySelectorAll('.mode')) {
   b.addEventListener('click', () => {
@@ -315,8 +388,13 @@ for (const b of document.querySelectorAll('.mode')) {
     for (const other of document.querySelectorAll('.mode')) {
       other.classList.toggle('is-on', other === b);
     }
+    brush.paintOverlay();
   });
 }
+
+els.focalRemove.addEventListener('click', () => {
+  if (brush.removeSelectedFocal()) invalidate();
+});
 
 // ---- image loading ----
 
@@ -375,7 +453,9 @@ function showWorkspace(img) {
     c.height = doc.height;
   }
   renderBase(baseCtx, img, doc.width, doc.height);
-  brush.clearOverlay();
+  brush.selected = -1;
+  syncFocalPanel(-1);
+  brush.paintOverlay();
 
   els.empty.hidden = true;
   els.stage.hidden = false;
@@ -439,13 +519,29 @@ document.addEventListener('paste', (e) => {
 
 // ---- actions ----
 
-els.undo.addEventListener('click', () => {
-  if (doc.undo()) invalidate();
-  else status('Nothing to undo.');
-});
+function doUndo() {
+  const target = doc.undo();
+  if (!target) {
+    status('Nothing to undo.');
+    return;
+  }
+  if (target === 'focal') {
+    brush.selected = Math.min(brush.selected, doc.focalPoints.length - 1);
+    syncFocalPanel(brush.selected);
+  }
+  brush.paintOverlay();
+  invalidate();
+}
+
+els.undo.addEventListener('click', doUndo);
 
 els.clear.addEventListener('click', () => {
-  doc.clearField();
+  doc.clearField(brush.target);
+  if (brush.target === 'focal') {
+    brush.selected = -1;
+    syncFocalPanel(-1);
+  }
+  brush.paintOverlay();
   invalidate();
 });
 
@@ -543,7 +639,7 @@ document.addEventListener('keydown', (e) => {
 
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
     e.preventDefault();
-    if (doc.undo()) invalidate();
+    doUndo();
     return;
   }
   if (e.key === ' ' && !typing) {

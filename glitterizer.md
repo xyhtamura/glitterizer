@@ -78,7 +78,7 @@ export default {
   params,                       // declarative control schema → auto-built UI
   init(ctx, opts),              // build sprite atlas / shader, once
   spawn(rng, sampled),          // per-particle properties
-  draw(ctx, p, t, opts)         // one particle, one frame
+  draw(ctx, p, t, env, pos)     // one particle, one frame, at pos [x, y]
 }
 ```
 
@@ -167,7 +167,7 @@ preset is no resize, no quantization, 24 fps.
 | PNG | `canvas.toBlob` | Single frame at the playhead, full resolution. |
 | WebM | `MediaRecorder` on the canvas stream | Cheap, smooth, high colour. Records whole loops back to back. MediaRecorder writes no duration into the header, so players report the length as infinite and often will not seek; the pixels are correct and the loop point is exact. |
 | GIF | vendored `gifenc` | Runs the output profile, then encodes. Frame-differenced, transparency-optimized. Encode off the main thread in a Worker; show progress. |
-| JSON | `doc.serialize()` | Source image as data URL, field maps as PNG data URLs, strokes, kit params, focal points, seed. Reopens exactly. |
+| JSON | `doc.serialize()` | Source image as data URL, field maps as PNG data URLs, kit params, focal points, seed. Fields are stored at 8 bits, so a reopened project is visually the same but not bit-identical: quantization moves some sparkles by under a pixel and flips a few near-threshold candidates. Zero and ±1 are exactly representable in the direction encoding, so an unpainted field reloads genuinely unpainted. |
 
 Everything is client-side. No upload, no server.
 
@@ -228,8 +228,8 @@ glitterizer/
   Proves the field → particle → composite chain.
 - **M2** — *Done 2026-08-10.* Loop transport, birth phases, twinkle, playback
   scrubber. WebM export. Project JSON save/load.
-- **M3** — Flow brush, advection paths, focal points, focus brush and its per-kit
-  interpretation.
+- **M3** — *Done 2026-08-12.* Flow brush, advection paths, focal points, focus
+  brush and its per-kit interpretation.
 - **M4** — Output profiles: quantize, dither, resize. GIF export in a worker.
   This is the milestone that makes it Blingee rather than a particle demo.
 - **M5** — `ascii` and `bokeh` kits.
@@ -339,6 +339,59 @@ Left undone: M3 onward. The flow field, focal points, and the focus brush are
 next, and the particle path precomputation described in §1 does not exist yet —
 sparkles currently hold still and only twinkle.
 
+**2026-08-12 — Claude Code —** Built M3. Sparkles now travel. The panel has four
+tools — Glitter, Direction, Focus, Focal points — sharing one pointer path;
+three paint a field and the fourth places draggable markers. Direction is a
+two-channel `VectorField`; paths are integrated once per derive into a shared
+`Float32Array` and sampled per frame; focal points contribute to the same
+combined flow as the painted field, so a brushed stream and a radial burst mix.
+
+Decisions worth keeping:
+
+- **Travel needs a fade to hide the return.** A sparkle at 100% lifetime is
+  never absent, so there is no cover for the jump from the end of its path back
+  to the start. Travel is therefore switched off at 100%, the default lifetime
+  moved to 70% so painted direction works out of the box, and the status line
+  says so plainly when direction is painted at 100%.
+- **One undo entry stores only the field its stroke touched.** Snapshotting all
+  three fields per stroke would cost megabytes for nothing.
+- **Focus is read by the kit, not applied by the engine.** The substrate only
+  samples it and folds it into the survival test; `blingee` turns it into size,
+  brightness, and a faster twinkle multiplier — chosen from the integer table so
+  loop closure survives.
+
+One real bug found and fixed. Direction was encoded to PNG with zero at 127.5,
+which cannot be represented: it rounds to 128 and decodes to 0.004. Every cell
+of an *unpainted* field came back as a faint diagonal drift, `isEmpty` stopped
+being true, and a project with no direction would start moving after a reload.
+Zero now sits at 127 with a scale of 127, which is exactly invertible on the
+byte grid.
+
+Verified in the browser: with travel off, a painted blob of glitter spans
+x ∈ [86, 204]; with 400 px of travel along a left-to-right painted direction it
+spans x ∈ [116, 543], drawn out downstream. An emit focal point grows the
+same blob from 118 × 106 to 263 × 258; switching it to pull inward shrinks it to
+68 × 69. Painting focus over the blob takes it from 1,806 to 5,560 lit pixels.
+`positionAt` returns the identical point at t = 0 and t = 1 for all of 1,500
+particles on curving paths, while 1,214 of them genuinely move mid-loop, so
+motion loops seamlessly. A full derive including path integration takes 6 ms.
+
+Known, now measured rather than assumed: a saved project reopens visually the
+same but not bit-identical — 528 differing bytes with density and focus alone,
+4,201 once direction is involved, out of about 6,700 lit pixels. That is 8-bit
+field storage, and §5 now says so instead of claiming an exact reopen. Making it
+exact would mean storing fields as compressed float data; not worth it for an
+invisible difference.
+
+The divergence caveat in §1 is now live rather than theoretical: painted flow is
+not divergence-free, so sparkles thin out where the field spreads and gather
+where it converges. At glitter scale it reads as the stream having character.
+Left as is.
+
+Left undone: M4 — the output profile (resize, palette quantization, dither) and
+GIF export, which is the milestone that makes the register switchable rather
+than implicit.
+
 **2026-08-10 — Antigravity —** Overhauled the CSS interface design (`styles.css` and `index.html`) following Xyh's design calibration principles (`xyh-design-calibration.md`, `xyh-design-fallbacks.md`). The new design synthesizes Blingee-era web studio chrome (shimmer title badge, bedazzled stage frame, 3D gel buttons) with 80s toy glitter magic (*Care Bears* cloud contours, *Escape from Catrina* potion plum depth) and *Lisa Frank* max-chroma neon gradients. Maintained 100% flat usability copy, clear body typography, and functional event targets. Verified locally on `http://localhost:8000/glitterizer/`.
 
 **2026-08-10 — Antigravity —** Evolved design to a radiant, hyper-girly cotton-candy pearl light mode using Google Fonts (`DynaPuff`, `Sniglet`, `Fredoka`). Replaced dark plum background with a soft pastel sugar-pink, sky-cyan, and lavender gradient (`#fcf2fa`) with high-contrast deep berry ink (`#380d4a`), glossy strawberry candy 3D gel buttons, and heart/ribbon sparkle icons. Verified locally on `http://localhost:8000/glitterizer/`.
@@ -347,3 +400,5 @@ sparkles currently hold still and only twinkle.
 
 
 
+
+**2026-10-04 — Codex —** Reviewed and committed the idle M3 changes: direction and focus brushes, focal points, precomputed particle paths, and project format version 2. JavaScript syntax checks passed for all 14 app modules with Node, and `git diff --check` found no whitespace errors. The browser verification recorded in the 2026-08-12 entry was not repeated in this sitting. M4 remains the next step: output profiles and GIF export.

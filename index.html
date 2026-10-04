@@ -43,8 +43,15 @@
   <aside class="panel" id="panel" hidden>
 
     <section class="group">
-      <h2>Brush</h2>
-      <div class="modes">
+      <h2>Tool</h2>
+      <div class="tools">
+        <button type="button" class="tool is-on" data-tool="density">Glitter</button>
+        <button type="button" class="tool" data-tool="flow">Direction</button>
+        <button type="button" class="tool" data-tool="focus">Focus</button>
+        <button type="button" class="tool" data-tool="focal">Focal points</button>
+      </div>
+      <p id="tool-hint" class="tool-hint">Paint where sparkles appear.</p>
+      <div class="modes" id="mode-row">
         <button type="button" class="mode is-on" data-mode="paint">Paint</button>
         <button type="button" class="mode" data-mode="erase">Erase</button>
       </div>
@@ -52,6 +59,14 @@
       <div class="row">
         <button id="btn-undo" type="button">Undo</button>
         <button id="btn-clear" type="button">Clear glitter</button>
+      </div>
+    </section>
+
+    <section class="group" id="focal-group" hidden>
+      <h2>Selected focal point</h2>
+      <div id="focal-controls"></div>
+      <div class="row">
+        <button id="btn-focal-remove" type="button">Remove focal point</button>
       </div>
     </section>
 
