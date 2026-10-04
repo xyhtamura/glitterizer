@@ -30,6 +30,7 @@
     <div id="stage" class="stage" hidden>
       <canvas id="base"></canvas>
       <canvas id="sparkle"></canvas>
+      <canvas id="output-preview" hidden></canvas>
       <canvas id="overlay"></canvas>
     </div>
     <div id="transport" class="transport" hidden>
@@ -89,10 +90,23 @@
     </section>
 
     <section class="group">
+      <h2>Output profile</h2>
+      <div class="row">
+        <button id="btn-clean" type="button">Clean</button>
+        <button id="btn-2007" type="button">2007</button>
+      </div>
+      <div id="profile-controls"></div>
+      <label><input id="preview-output" type="checkbox"> Preview output</label>
+      <p class="tool-hint">PNG and WebM use this profile. GIF uses up to 256 colors. Transparent images export on white.</p>
+      <p id="output-summary" class="tool-hint"></p>
+    </section>
+
+    <section class="group">
       <h2>Export</h2>
       <div id="export-controls"></div>
       <div class="row">
         <button id="btn-png" type="button">Export PNG</button>
+        <button id="btn-gif" type="button">Export GIF</button>
         <button id="btn-webm" type="button">Export WebM</button>
       </div>
       <div class="row">

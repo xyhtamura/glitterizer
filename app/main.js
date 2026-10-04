@@ -8,9 +8,11 @@ import {
 } from './doc.js';
 import { getKit } from './kits/index.js';
 import { deriveParticles } from './particles.js';
-import { renderBase, renderFrame, drawParticles } from './render.js';
+import { renderBase, renderFrame } from './render.js';
 import { Brush } from './brush.js';
 import { exportPNG } from './export/png.js';
+import { exportGIF } from './export/gif.js';
+import { CLEAN, VINTAGE, PROFILE_PARAMS, applyProfile, outputTiming, outputSize } from './export/profile.js';
 import { exportWebM, webmSupported } from './export/webm.js';
 import { saveProject, readProjectFile } from './export/project.js';
 import { FOCAL_MODES, hasFlow } from './flow.js';
@@ -37,6 +39,13 @@ const els = {
   clear: el('btn-clear'),
   reshuffle: el('btn-reshuffle'),
   png: el('btn-png'),
+  gif: el('btn-gif'),
+  preview: el('output-preview'),
+  previewToggle: el('preview-output'),
+  profileControls: el('profile-controls'),
+  outputSummary: el('output-summary'),
+  clean: el('btn-clean'),
+  vintage: el('btn-2007'),
   webm: el('btn-webm'),
   save: el('btn-save'),
   load: el('btn-load'),
@@ -59,6 +68,9 @@ doc.kitParams = defaultsOf(kit.params);
 
 const baseCtx = els.base.getContext('2d');
 const sparkleCtx = els.sparkle.getContext('2d');
+const composite = document.createElement('canvas');
+const compositeSparkles = document.createElement('canvas');
+const profileCanvas = document.createElement('canvas');
 const brush = new Brush(els.overlay, doc, () => invalidate(), (i) => syncFocalPanel(i));
 
 const state = {
@@ -112,6 +124,19 @@ function draw() {
   if (!doc.hasImage) return;
   ensureParticles();
   renderFrame(sparkleCtx, state.particles, kit, timeOf(state.frame), doc.loop.lifetime / 100);
+  els.preview.hidden = !els.previewToggle.checked;
+  if (els.previewToggle.checked) {
+    sizeComposite();
+    compositeFrame(composite.getContext('2d'), timeOf(state.frame));
+    applyProfile(composite, doc.profile, els.preview);
+  }
+}
+
+function sizeComposite() {
+  for (const canvas of [composite, compositeSparkles]) {
+    if (canvas.width !== doc.width) canvas.width = doc.width;
+    if (canvas.height !== doc.height) canvas.height = doc.height;
+  }
 }
 
 /** One composited frame, for export. */
@@ -119,7 +144,9 @@ function compositeFrame(ctx, t) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, doc.width, doc.height);
   ctx.drawImage(els.base, 0, 0);
-  drawParticles(ctx, state.particles, kit, t, doc.loop.lifetime / 100);
+  sizeComposite();
+  renderFrame(compositeSparkles.getContext('2d'), state.particles, kit, t, doc.loop.lifetime / 100);
+  ctx.drawImage(compositeSparkles, 0, 0);
 }
 
 // ---- transport ----
@@ -235,10 +262,12 @@ function buildControls(container, schema, values, onChange) {
     }
 
     if (p.type === 'select') {
-      const lab = document.createElement('div');
+      const lab = document.createElement('label');
       lab.className = 'lab';
       lab.textContent = p.label;
       const sel = document.createElement('select');
+      sel.id = `c-${p.key}-${Math.random().toString(36).slice(2, 7)}`;
+      lab.htmlFor = sel.id;
       for (const o of p.options) {
         const opt = document.createElement('option');
         opt.value = o.v;
@@ -307,10 +336,30 @@ function buildAllControls() {
   buildControls(els.loopControls, LOOP_PARAMS, doc.loop, onLoopChange);
   buildControls(els.kitControls, kit.params, doc.kitParams, () => invalidate());
   buildControls(els.exportControls, EXPORT_PARAMS, doc.exportOpts, () => {});
+  buildProfileControls();
   els.kitTitle.textContent = kit.label;
 }
 
+function buildProfileControls() {
+  buildControls(els.profileControls, PROFILE_PARAMS, doc.profile, () => {
+    syncOutputSummary(); scheduleDraw();
+  });
+  syncOutputSummary();
+}
+
+function syncOutputSummary() {
+  if (!doc.hasImage) { els.outputSummary.textContent = ''; return; }
+  const size = outputSize(doc.width, doc.height, doc.profile);
+  const timing = outputTiming(doc.loop, doc.profile);
+  els.outputSummary.textContent = `${size.width} × ${size.height} px · ${timing.frames} output frames · ${timing.duration.toFixed(2)} s per loop`;
+}
+
+els.clean.addEventListener('click', () => { Object.assign(doc.profile, CLEAN); buildProfileControls(); scheduleDraw(); });
+els.vintage.addEventListener('click', () => { Object.assign(doc.profile, VINTAGE); buildProfileControls(); scheduleDraw(); });
+els.previewToggle.addEventListener('change', () => draw());
+
 function onLoopChange(key) {
+  syncOutputSummary();
   if (key === 'frames' && state.frame >= doc.loop.frames) state.frame = doc.loop.frames - 1;
   if (state.playing) state.clockStart = performance.now() - state.frame * (1000 / doc.loop.fps);
   syncTransport();
@@ -399,7 +448,7 @@ els.focalRemove.addEventListener('click', () => {
 // ---- image loading ----
 
 async function loadFile(file) {
-  if (!file) return;
+  if (!file || state.busy) return;
   if (file.type && !file.type.startsWith('image/') && !/\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name)) {
     status('That file is not an image.');
     return;
@@ -433,6 +482,7 @@ async function loadFile(file) {
 }
 
 function loadURL(url) {
+  if (state.busy) return;
   status('Loading image from URL…');
   const img = new Image();
   img.crossOrigin = 'anonymous';
@@ -448,6 +498,7 @@ function loadURL(url) {
 }
 
 function showWorkspace(img) {
+  syncOutputSummary();
   for (const c of [els.base, els.sparkle, els.overlay]) {
     c.width = doc.width;
     c.height = doc.height;
@@ -552,16 +603,22 @@ els.reshuffle.addEventListener('click', () => {
 
 function setBusy(on) {
   state.busy = on;
-  for (const b of [els.png, els.webm, els.save, els.load, els.choose]) b.disabled = on;
+  for (const input of document.querySelectorAll('.panel button, .panel input, .panel select, #transport button, #transport input, #btn-choose')) {
+    input.disabled = on;
+  }
+  els.overlay.style.pointerEvents = on ? 'none' : '';
+  if (!on && !webmSupported()) els.webm.disabled = true;
 }
 
 els.png.addEventListener('click', async () => {
   if (state.busy) return;
+  pause();
   try {
     setBusy(true);
     status('Encoding PNG…');
     ensureParticles();
-    const bytes = await exportPNG(els.base, els.sparkle);
+    draw();
+    const bytes = await exportPNG(els.base, els.sparkle, doc.profile);
     status(`Saved PNG · ${(bytes / 1024).toFixed(0)} KB`);
   } catch (err) {
     status(`Export failed: ${err.message}`);
@@ -570,17 +627,38 @@ els.png.addEventListener('click', async () => {
   }
 });
 
+els.gif.addEventListener('click', async () => {
+  if (state.busy) return;
+  pause();
+  try {
+    setBusy(true); ensureParticles();
+    const bytes = await exportGIF(compositeFrame, {
+      width: doc.width, height: doc.height, loop: { ...doc.loop }, profile: { ...doc.profile },
+      onProgress: (phase, i, total) => status(`${phase === 'palette' ? 'Sampling palette' : 'Encoding'} frame ${i} of ${total}.`)
+    });
+    status(`Saved GIF · ${(bytes / 1024).toFixed(0)} KB`);
+  } catch (err) { status(`Export failed: ${err.message}`); }
+  finally { setBusy(false); draw(); }
+});
+
 els.webm.addEventListener('click', async () => {
   if (state.busy) return;
   pause();
   try {
     setBusy(true);
     ensureParticles();
-    const bytes = await exportWebM(compositeFrame, {
-      width: doc.width,
-      height: doc.height,
-      frames: doc.loop.frames,
-      fps: doc.loop.fps,
+    const size = outputSize(doc.width, doc.height, doc.profile);
+    const timing = outputTiming(doc.loop, doc.profile);
+    sizeComposite();
+    const bytes = await exportWebM((ctx, t) => {
+      compositeFrame(composite.getContext('2d'), t);
+      applyProfile(composite, doc.profile, profileCanvas);
+      ctx.drawImage(profileCanvas, 0, 0);
+    }, {
+      width: size.width,
+      height: size.height,
+      frames: timing.frames,
+      fps: timing.fps,
       loops: doc.exportOpts.loops,
       onProgress: (i, total) => status(`Recording frame ${i} of ${total}…`)
     });

@@ -232,6 +232,7 @@ main {
 }
 
 .stage #sparkle,
+.stage #output-preview,
 .stage #overlay {
   position: absolute;
   top: 8px;
@@ -518,6 +519,8 @@ button.is-on:hover:not(:disabled) {
   gap: 5px;
   margin-bottom: 8px;
 }
+
+.stage [hidden] { display: none; }
 
 .tools .tool {
   padding: 7px 8px;

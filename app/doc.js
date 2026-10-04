@@ -9,6 +9,7 @@ import {
   loadImage
 } from './fields.js';
 import { newSeed } from './rng.js';
+import { CLEAN } from './export/profile.js';
 
 /** Long edge of the working canvas. Larger sources are scaled down on load. */
 export const MAX_EDGE = 1600;
@@ -95,6 +96,7 @@ export class Doc {
     this.brush = defaultsOf(BRUSH_PARAMS);
     this.loop = defaultsOf(LOOP_PARAMS);
     this.exportOpts = defaultsOf(EXPORT_PARAMS);
+    this.profile = { ...CLEAN };
     this.kitId = 'blingee';
     this.kitParams = {};
     this.undoStack = [];
@@ -165,6 +167,7 @@ export class Doc {
       brush: { ...this.brush },
       loop: { ...this.loop },
       exportOpts: { ...this.exportOpts },
+      profile: { ...this.profile },
       kitId: this.kitId,
       kitParams: structuredClone(this.kitParams),
       focalPoints: this.focalPoints.map((p) => ({ ...p })),
@@ -215,6 +218,8 @@ export async function deserialize(json, doc) {
   merge(doc.brush, json.brush);
   merge(doc.loop, json.loop);
   merge(doc.exportOpts, json.exportOpts);
+  doc.profile = { ...CLEAN };
+  merge(doc.profile, json.profile);
   merge(doc.kitParams, json.kitParams);
   return img;
 }

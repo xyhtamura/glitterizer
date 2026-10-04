@@ -143,7 +143,7 @@ registers:
 
 ## 4. Register, as an output stage
 
-Kit and register are independent axes. Rendering runs at source resolution in
+Kit and register are independent axes. Rendering runs at working resolution in
 full colour; the vintage look is a post-process applied on the way out, so a
 photoreal `bokeh` composite can be pushed through the 2007 downgrade and a
 `blingee` composite can be exported clean.
@@ -158,15 +158,26 @@ photoreal `bokeh` composite can be pushed through the 2007 downgrade and a
 The "2007" preset is 400 px, 64-colour adaptive, Bayer 8×8, 12 fps. The "clean"
 preset is no resize, no quantization, 24 fps.
 
+Working resolution is capped at a 1,600 px long edge on import. Profiles apply
+to PNG, GIF, and WebM; the optional output preview shows the resized and
+quantized composite while brushing still uses working coordinates. Exported
+transparent sources are flattened onto white. Dither applies when a palette
+is selected. GIF's full-color setting uses an adaptive 256-color palette
+because GIF cannot store full-color frames.
+
+The output frame rate resamples the loop while preserving its duration.
+Frame counts are rounded to the nearest integer, and GIF delays use cumulative
+centisecond rounding, so total duration is within 5 ms of the source loop.
+
 ---
 
 ## 5. Export
 
 | Format | Path | Notes |
 |---|---|---|
-| PNG | `canvas.toBlob` | Single frame at the playhead, full resolution. |
-| WebM | `MediaRecorder` on the canvas stream | Cheap, smooth, high colour. Records whole loops back to back. MediaRecorder writes no duration into the header, so players report the length as infinite and often will not seek; the pixels are correct and the loop point is exact. |
-| GIF | vendored `gifenc` | Runs the output profile, then encodes. Frame-differenced, transparency-optimized. Encode off the main thread in a Worker; show progress. |
+| PNG | `canvas.toBlob` | Single frame at the playhead, processed through the output profile. |
+| WebM | `MediaRecorder` on the canvas stream | Uses the output profile and records the selected number of loops in real time. Can miss frames under load, adds a priming frame, and writes no seekable duration. Frame-exact WebM remains a follow-up. |
+| GIF | vendored `gifenc` 1.0.3 | One loop, repeats indefinitely. A worker samples all frames for one shared palette, then maps and encodes frames sequentially. Unchanged pixels become transparent when the palette leaves an index free; a 256-color palette uses full frames. Disposal keeps the preceding composite. |
 | JSON | `doc.serialize()` | Source image as data URL, field maps as PNG data URLs, kit params, focal points, seed. Fields are stored at 8 bits, so a reopened project is visually the same but not bit-identical: quantization moves some sparkles by under a pixel and flips a few near-threshold candidates. Zero and ±1 are exactly representable in the direction encoding, so an unpainted field reloads genuinely unpainted. |
 
 Everything is client-side. No upload, no server.
@@ -230,13 +241,14 @@ glitterizer/
   scrubber. WebM export. Project JSON save/load.
 - **M3** — *Done 2026-08-12.* Flow brush, advection paths, focal points, focus
   brush and its per-kit interpretation.
-- **M4** — Output profiles: quantize, dither, resize. GIF export in a worker.
+- **M4** — *Done 2026-10-04.* Output profiles: quantize, dither, resize. GIF export in a worker.
   This is the milestone that makes it Blingee rather than a particle demo.
 - **M5** — `ascii` and `bokeh` kits.
 - **M6** — Auto-glitter: luminance threshold + Sobel edges seed the density
   field in one click, so the tool has a zero-brushstroke path to a result.
 - **Later** — `flare` and `flake` kits. Layer list UI with per-layer kit and
-  blend mode. Stamp import for user PNG sprites.
+  blend mode. Stamp import for user PNG sprites. Frame-exact WebM through a
+  stamped copy of the framecast muxer and WebCodecs.
 
 ---
 
@@ -402,3 +414,32 @@ than implicit.
 
 
 **2026-10-04 — Codex —** Reviewed and committed the idle M3 changes: direction and focus brushes, focal points, precomputed particle paths, and project format version 2. JavaScript syntax checks passed for all 14 app modules with Node, and `git diff --check` found no whitespace errors. The browser verification recorded in the 2026-08-12 entry was not repeated in this sitting. M4 remains the next step: output profiles and GIF export.
+
+**2026-10-04 — Codex —** Built M4. Output profiles have Clean and 2007 presets,
+long-edge resizing, histogram median-cut adaptive palettes, a web-safe palette,
+Bayer 4×4 and 8×8 dithering, and Floyd–Steinberg error diffusion. An optional
+preview shows the processed composite over the working canvas. PNG and WebM
+use the same profile, and JSON saves its settings; projects without a profile
+load with Clean defaults.
+
+GIF export uses the locally vendored MIT-licensed gifenc 1.0.3 encoder. A module
+worker builds one palette from at most 2,048 sampled pixels per frame, then
+encodes a second pass, with only one transferred RGBA frame in flight.
+Unchanged pixels use transparency when the palette leaves room; 256-color
+exports keep full frames. Loop duration survives output frame-rate changes.
+Controls and brush input are disabled during export.
+
+Checked in headless Edge through `test/verify-export.mjs`: painted a synthetic
+gradient, applied 2007, checked 400×250 output and matching source/preview/brush
+bounds, downloaded PNG, GIF, WebM, and JSON, reopened the profile, and loaded a
+version 1 project with Clean defaults. FFmpeg decoded all four independent
+GIF fixtures (adaptive/Bayer, adaptive/Floyd–Steinberg, web-safe/Bayer, and
+full-color fallback) to exactly their expected pixels. ffprobe counted 24,
+48, 30, and 20 frames, each with a 2 s duration. PNG and WebM decode at 400×250.
+The WebM records 25 frames for the 24-frame test loop because of its priming
+frame; frame-exact WebM was left as a separate follow-up to keep this milestone
+on output profiles and GIF. No shared runtime was modified or vendored.
+
+Reusable checks and decoder commands are in `test/README.md`; generated
+fixtures are ignored. Left undone: M5, the ASCII and bokeh kits, followed by
+auto-glitter. Large or long GIF performance and Firefox/Safari remain unchecked.

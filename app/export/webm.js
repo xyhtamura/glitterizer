@@ -1,8 +1,8 @@
 // Video export. MediaRecorder timestamps frames by wall clock, so the loop is
 // played out in real time at its own frame rate and each frame is pushed into
 // the stream explicitly. Recording several loops gives a file long enough to
-// scrub; the loop point itself is exact, since every cycle is identical.
-// GIF, and the resize/palette/dither profile, are M4 — see glitterizer.md §4, §5.
+// scrub. This is a real-time recorder: it can drop frames under load and does
+// not write a seekable duration. Frame-exact WebM is a separate follow-up.
 
 import { downloadBlob, stamp } from './download.js';
 
